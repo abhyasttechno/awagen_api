@@ -1,0 +1,5 @@
+google-genai
+flask
+flask-cors
+waitress # A production WSGI server for Cloud Run
+python-dotenv # Optional: only needed for local testing with a .env file
