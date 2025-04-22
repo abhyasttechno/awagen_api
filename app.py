@@ -61,9 +61,13 @@ def generate_post():
                 logging.info(f"Processing file from request: {file_storage.filename}, Detected MIME: {file_storage.mimetype}")
                 if file_storage.filename and file_storage.mimetype and file_storage.mimetype.startswith('image/'):
                     try:
-                        # FileStorage object behaves like a file, we can pass it directly
-                        # The File API call uploads the data to Google's backend
-                        gemini_file = client.files.upload(file=file_storage)
+                        image_bytes = file_storage.read()
+                        logging.info(f"Read {len(image_bytes)} bytes for {file_storage.filename}") # Log byte count
+                    
+                        # Pass the content, filename, and mimetype as a tuple to client.files.upload
+                        # The tuple format is (filename, file_content, mime_type)
+                        gemini_file = client.files.upload(file=(file_storage.filename, image_bytes, file_storage.mimetype))
+                    
                         uploaded_gemini_files.append(gemini_file)
                         logging.info(f"Successfully uploaded file {file_storage.filename} to Gemini File API. URI: {gemini_file.uri}")
                     except Exception as e:
