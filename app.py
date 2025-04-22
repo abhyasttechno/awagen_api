@@ -7,6 +7,8 @@ from google import genai
 from google.genai import types
 import logging
 import traceback
+import tempfile  # Import tempfile module
+import shutil    # Import shutil module
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +24,6 @@ if not API_KEY:
 else:
     try:
         client = genai.Client(api_key=API_KEY)
-        # Optional: Test configuration
         # logging.info("Gemini API client initialized successfully.")
     except Exception as e:
         logging.error(f"Failed to configure Gemini API client: {e}")
@@ -35,8 +36,11 @@ def generate_post():
         logging.error("Gemini API client is not initialized.")
         return jsonify({"error": "Server is not configured with the API key or failed to initialize API client."}), 500
 
-    # List to keep track of successfully uploaded file objects from the File API
+    # List to keep track of successfully uploaded file objects (URIs) from the File API
     uploaded_gemini_files = []
+
+    # List to keep track of temporary file paths for cleanup
+    temp_file_paths = []
 
     try:
         # Get data from request.form (for text) and request.files (for images)
@@ -54,39 +58,59 @@ def generate_post():
 
         logging.info(f"Received request: postType={post_type}, outputLanguage={output_language}, context='{user_context[:50]}...', images_count={len(uploaded_files_from_request)}")
 
-        # --- MODIFIED: Upload files using the File API ---
+        # --- MODIFIED: Process and upload files using temporary files ---
         if len(uploaded_files_from_request) > 0:
-            logging.info(f"Attempting to upload {len(uploaded_files_from_request)} files to Gemini File API...")
+            logging.info(f"Attempting to process and upload {len(uploaded_files_from_request)} files via temporary files...")
             for file_storage in uploaded_files_from_request:
                 logging.info(f"Processing file from request: {file_storage.filename}, Detected MIME: {file_storage.mimetype}")
+
+                temp_file_path = None # Initialize inside the loop for each file
+
                 if file_storage.filename and file_storage.mimetype and file_storage.mimetype.startswith('image/'):
                     try:
-                        image_bytes = file_storage.read()
-                        logging.info(f"Read {len(image_bytes)} bytes for {file_storage.filename}") # Log byte count
-                    
-                        # Pass the content, filename, and mimetype as a tuple to client.files.upload
-                        # The tuple format is (filename, file_content, mime_type)
-                        gemini_file = client.files.upload(file=(file_storage.filename, image_bytes, file_storage.mimetype))
-                    
+                        # Create a temporary file. mkstemp returns a file descriptor and a path.
+                        # We need the path to pass to client.files.upload.
+                        # Adding a suffix based on the original filename helps the API infer the type.
+                        fd, temp_file_path = tempfile.mkstemp(suffix=os.path.splitext(file_storage.filename)[1] or '') # Add suffix or empty string
+                        os.close(fd) # Close the OS-level file descriptor immediately
+
+                        logging.info(f"Saving uploaded file {file_storage.filename} to temporary path: {temp_file_path}")
+                        temp_file_paths.append(temp_file_path) # Add to the list for cleanup later
+
+                        # Ensure the FileStorage stream position is at the beginning
+                        # (important if something else read from it before)
+                        file_storage.seek(0)
+                        # Open the temporary file and copy the content from the uploaded file
+                        with open(temp_file_path, 'wb') as temp_file:
+                            shutil.copyfileobj(file_storage, temp_file)
+
+                        # Now upload the temporary file using its path
+                        # The 'file' parameter of client.files.upload expects a path string or os.PathLike object
+                        # Pass display_name for better identification in the File API list
+                        gemini_file = client.files.upload(file=temp_file_path, display_name=file_storage.filename)
+
                         uploaded_gemini_files.append(gemini_file)
-                        logging.info(f"Successfully uploaded file {file_storage.filename} to Gemini File API. URI: {gemini_file.uri}")
+                        logging.info(f"Successfully uploaded file {file_storage.filename} to Gemini File API. URI: {gemini_file.uri}, MIME: {gemini_file.mime_type}")
+
                     except Exception as e:
-                        logging.error(f"Error uploading file {file_storage.filename} to Gemini File API: {e}")
-                        logging.error(f"Full traceback for File API upload error of {file_storage.filename}:")
+                        # Catch errors specifically during temp file creation, writing, or File API upload
+                        logging.error(f"Error during temporary file processing or upload for {file_storage.filename}: {e}")
+                        logging.error(f"Full traceback for file processing/upload error of {file_storage.filename}:")
                         traceback.print_exc()
-                        # Decide how to handle: pass skips the file, raise would stop the request
-                        # For now, we'll just log and skip this problematic file
-                        pass
+                        # If an error occurred for this specific file, ensure its temp file is marked for removal
+                        # This is implicitly handled by adding to temp_file_paths and the finally block,
+                        # but we skip adding it to uploaded_gemini_files so it's not referenced later.
+                        pass # Skip this problematic file
+
                 else:
                      logging.warning(f"Skipping non-image file from request: {file_storage.filename or 'No filename'}, MIME: {file_storage.mimetype or 'Unknown'}")
 
-        # Check if at least text is available, or if images were intended
+        # Check if at least text is available, or if images were successfully uploaded
         if not user_context.strip() and not uploaded_gemini_files:
-             logging.error("No user context and no valid images uploaded.")
+             logging.error("No user context and no valid images successfully uploaded.")
              return jsonify({"error": "Please provide text details or upload valid images."}), 400
 
-        # --- MODIFIED: Construct content parts using URIs ---
-        # Start with the text part
+        # --- Construct content parts using URIs of the successfully uploaded files ---
         text_part_content = f"""Generate social media content based on the following requirements:
 - Post Type: {post_type}
 - Input Context Language: {input_language}
@@ -118,12 +142,12 @@ Dont mention 5W1H approach which is what, who, when, where, why and how? in the 
 Ensure the language of the generated content is strictly in {output_language}.
 """
 
-        # Create the list of parts, starting with the text part
         parts = [types.Part.from_text(text=text_part_content)]
 
         # Add image parts using URIs of the successfully uploaded files
         for gemini_file in uploaded_gemini_files:
              try:
+                # Use the URI and MIME type obtained from the successful File API upload result
                 parts.append(types.Part.from_uri(file_uri=gemini_file.uri, mime_type=gemini_file.mime_type))
                 logging.info(f"Added URI part for {gemini_file.uri}")
              except Exception as e:
@@ -132,10 +156,8 @@ Ensure the language of the generated content is strictly in {output_language}.
                  # Continue adding other parts even if one URI part fails
                  pass
 
-        # Check if there are any parts to send (at least the text part should be there)
-        if not parts:
+        if not parts: # Should at least contain the text part if context is mandatory
              logging.error("No parts (text or image URIs) successfully prepared for AI call.")
-             # This case is unlikely if user_context is mandatory and handled first, but good safeguard
              return jsonify({"error": "Could not prepare content for the AI model."}), 500
 
 
@@ -143,15 +165,14 @@ Ensure the language of the generated content is strictly in {output_language}.
 
         # Call the Gemini API using the list of parts with URIs
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.0-flash", # or "gemini-1.5-flash-latest"
             contents=[types.Content(role="user", parts=parts)]
         )
-        # --- END MODIFIED ---
 
         generated_text = response.text
         logging.info(f"Received response text length: {len(generated_text)}")
 
-        # Parse the generated text into sections (regex remains similar)
+        # Parse the generated text into sections
         facebook_match = re.search(r'### Facebook Post ###\s*([\s\S]*?)(?=\s*### X \(Twitter\) Post ###|$)', generated_text)
         x_match = re.search(r'### X \(Twitter\) Post ###\s*([\s\S]*?)(?=\s*### Instagram Post ###|$)', generated_text)
         instagram_match = re.search(r'### Instagram Post ###\s*([\s\S]*?)$', generated_text)
@@ -160,7 +181,6 @@ Ensure the language of the generated content is strictly in {output_language}.
         x_content = x_match.group(1).strip() if x_match else ""
         instagram_content = instagram_match.group(1).strip() if instagram_match else ""
 
-        # Check if any content was successfully parsed
         if not facebook_content and not x_content and not instagram_content:
             if generated_text and generated_text.strip():
                 logging.warning("Failed to parse sections from AI response, returning raw text.")
@@ -178,7 +198,8 @@ Ensure the language of the generated content is strictly in {output_language}.
         })
 
     except Exception as e:
-        logging.error(f"An error occurred during processing or AI call: {e}", exc_info=True)
+        # Catch any other unexpected errors during the request processing
+        logging.error(f"An unexpected error occurred during processing or AI call: {e}", exc_info=True)
         error_message = str(e)
         if "API key" in error_message or "authentication" in error_message:
              error_message = "API authentication failed. Check your GEMINI_API_KEY."
@@ -193,10 +214,19 @@ Ensure the language of the generated content is strictly in {output_language}.
 
         return jsonify({"error": error_message}), 500
 
-
+    finally:
+        # --- MODIFIED: Clean up ALL temporary files that were created ---
+        # This ensures temporary files don't fill up disk space on the server
+        for temp_path in temp_file_paths:
+            if os.path.exists(temp_path):
+                try:
+                    logging.info(f"Cleaning up temporary file: {temp_path}")
+                    os.remove(temp_path)
+                except Exception as cleanup_error:
+                    logging.error(f"Error cleaning up temporary file {temp_path}: {cleanup_error}")
 
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-   
+ 
     app.run(host='0.0.0.0', port=port, debug=True)
