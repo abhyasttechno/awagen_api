@@ -18,6 +18,8 @@ CORS(app)
 # This is the SECURE way to handle keys in Cloud Run
 API_KEY = os.environ.get('GEMINI_API_KEY')
 
+client = genai.Client(api_key=API_KEY)
+
 if not API_KEY:
     logging.error("GEMINI_API_KEY environment variable not set!")
     # In production, you might want to stop the app or return an error on startup
@@ -25,7 +27,7 @@ if not API_KEY:
     pass # Or sys.exit(1)
 
 
-MODEL_ID = "gemini-1.5-flash-latest" # Use a suitable model, e.g., gemini-1.5-flash-latest
+# MODEL_ID = "gemini-1.5-flash-latest" # Use a suitable model, e.g., gemini-1.5-flash-latest
 # Use the configured API key
 if API_KEY:
     try:
@@ -91,17 +93,10 @@ Ensure the language of the generated content is strictly in {output_language}.
 """
 
         logging.info(f"Sending prompt to Gemini: {prompt[:200]}...") # Log first 200 chars
-
-        # Call the Gemini API
-        model = genai.GenerativeModel(MODEL_ID)
-        response = model.generate_content(prompt)
-
-        client = genai.Client(api_key=API_KEY)
-
-        response = client.models.generate_content(
-            model=MODEL_ID, contents=prompt
-        )
         
+        # Call the Gemini API
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+      
 
         logging.info(f"Received response from Gemini (partial): {str(response.text)[:200]}...") # Log partial response
 
