@@ -147,7 +147,4 @@ Ensure the language of the generated content is strictly in {output_language}.
 # Cloud Run uses the PORT environment variable
 # For local testing, you can set a default like 8080
 if __name__ == '__main__':
-    
-
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=True) # debug=True for local dev, change to False for prod
+    app.run(host='0.0.0.0', port='8080', debug=True) # debug=True for local dev, change to False for prod
