@@ -31,7 +31,7 @@ if not API_KEY:
 # Use the configured API key
 if API_KEY:
     try:
-        genai.configure(api_key=API_KEY)
+        client = genai.Client(api_key=API_KEY)
         # Optional: Test if configuration works (e.g., list models)
         # for m in genai.list_models():
         #     logging.info(f"Available model: {m.name}")
