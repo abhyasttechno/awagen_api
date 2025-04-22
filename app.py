@@ -87,7 +87,7 @@ def generate_post():
                         # Now upload the temporary file using its path
                         # The 'file' parameter of client.files.upload expects a path string or os.PathLike object
                         # Pass display_name for better identification in the File API list
-                        gemini_file = client.files.upload(file=temp_file_path, display_name=file_storage.filename)
+                        gemini_file = client.files.upload(file=temp_file_path)
 
                         uploaded_gemini_files.append(gemini_file)
                         logging.info(f"Successfully uploaded file {file_storage.filename} to Gemini File API. URI: {gemini_file.uri}, MIME: {gemini_file.mime_type}")
