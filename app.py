@@ -189,14 +189,7 @@ Ensure the language of the generated content is strictly in {output_language}.
 
         return jsonify({"error": error_message}), 500
 
-    finally:
-        # --- MODIFIED: Clean up uploaded files (optional but good practice) ---
-        # Note: Files uploaded via the File API auto-expire, but explicitly deleting is cleaner
-        # However, deleting them immediately after the generate_content call *might*
-        # cause issues if the AI model hasn't finished processing the URI request internally yet.
-        # A safer approach for this simple example is to let them expire naturally or
-        # implement a separate cleanup mechanism if needed.
-        # For now, we won't add explicit deletion here right after the call.
+
 
 
 if __name__ == '__main__':
